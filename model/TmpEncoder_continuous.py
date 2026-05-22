@@ -111,8 +111,6 @@ class TemEmbedEEGLayer(nn.Module):
 		
 		return out
 		
-
-
 class BrainEmbedEEGLayer(nn.Module):
 	def __init__(self, sorted_map, d_model, convolution_set=[(1,), (3,), (5,)]):
 		super().__init__()
@@ -207,72 +205,62 @@ class TemporalAttention(nn.Module):
 		return final_out
 
 class RegionAttention(nn.Module):
-    def __init__(self, sorted_map, d_model=200, num_heads=8, dropout=0.1, batch_first=True):
-        super().__init__()
-        self.register_buffer("sorted_map", sorted_map.long())
-        self.attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, dropout=dropout, batch_first=batch_first)
-        self.group_transform = nn.Linear(d_model, d_model)
-        
-        num_chans = self.sorted_map.shape[0]
-        # Treat the square root as the SIZE of the group, not the number of groups
-        group_size = int(num_chans ** 0.5)
-        
-        # Calculate how many full groups we will have, plus 1 if there are leftovers
-        self.num_full_groups = num_chans // group_size
-        self.num_leftovers = num_chans % group_size
-        total_groups = self.num_full_groups + (1 if self.num_leftovers != 0 else 0)
-        
-        # Update projection layer to match the new total number of groups
-        self.proj = nn.Linear(total_groups, 1)
-        
-    def forward(self, x):
-        Bz, num_chans, num_patch, patch_size = x.shape
-        group_size = int(num_chans ** 0.5)
-        
-        num_full_groups = num_chans // group_size
-        num_leftovers = num_chans % group_size
-        num_complete = num_full_groups * group_size
-        
-        sorted_x = x.permute(0, 2, 1, 3)
-        sorted_x = sorted_x.reshape(Bz * num_patch, num_chans, patch_size)
-        
-        # This turns sorted_x into shape (Bz*num_patch, num_chans, num_chans, patch_size)
-        sorted_x = sorted_x[:, self.sorted_map, :]
-        
-        # 1. Process the cleanly divisible blocks sequentially [0...G-1], [G...2G-1]
-        complete_x = sorted_x[:, :, :num_complete, :]
-        
-        # Reshape to group adjacent channels together: shape is now (..., num_full_groups, group_size, patch_size)
-        complete_x = complete_x.reshape(Bz * num_patch, num_chans, num_full_groups, group_size, patch_size)
-        
-        # Average over the `group_size` dimension (dim=3)
-        group_mean = torch.mean(complete_x, dim=3) 
-        
-        # 2. Process the uneven last block carefully
-        if num_leftovers != 0:
-            rem_x = sorted_x[:, :, num_complete:, :]
-            # Average over the leftovers. keepdim=True ensures shape is (..., 1, patch_size) for concatenation
-            rem_mean = torch.mean(rem_x, dim=2, keepdim=True)
-            flat = torch.cat([group_mean, rem_mean], dim=2)
-        else:
-            flat = group_mean
-            
-        final_flat = self.group_transform(flat)
-        
-        # 3. Prepare for MultiheadAttention
-        final_num_groups = final_flat.shape[2]
-        final_flat = final_flat.reshape(-1, final_num_groups, patch_size)
-        
-        out = self.attn(final_flat, final_flat, final_flat)[0]
-        
-        # 4. Projection and un-flattening back to original dimensions
-        out = out.permute(0, 2, 1).contiguous()
-        out = self.proj(out).squeeze(-1)
-        
-        out = out.reshape(Bz, num_patch, num_chans, patch_size)
-        out = out.permute(0, 2, 1, 3).contiguous()
-        
-        return out	
+	def __init__(self, sorted_map, d_model=200, num_heads=8, dropout=0.1, batch_first=True):
+		super().__init__()
+		self.register_buffer("sorted_map", sorted_map.long())
+		self.attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, dropout=dropout, batch_first=batch_first)
+		self.group_transform = nn.Linear(d_model, d_model)
+		
+		num_chans = self.sorted_map.shape[0]
+
+		group_size = int(num_chans ** 0.5)
+
+		self.num_full_groups = num_chans // group_size
+		self.num_leftovers = num_chans % group_size
+		total_groups = self.num_full_groups + (1 if self.num_leftovers != 0 else 0)
+
+		self.proj = nn.Linear(total_groups, 1)
+		
+	def forward(self, x):
+		Bz, num_chans, num_patch, patch_size = x.shape
+		group_size = int(num_chans ** 0.5)
+		
+		num_full_groups = num_chans // group_size
+		num_leftovers = num_chans % group_size
+		num_complete = num_full_groups * group_size
+		
+		sorted_x = x.permute(0, 2, 1, 3)
+		sorted_x = sorted_x.reshape(Bz * num_patch, num_chans, patch_size)
+
+		sorted_x = sorted_x[:, self.sorted_map, :]
+
+		complete_x = sorted_x[:, :, :num_complete, :]
+
+		complete_x = complete_x.reshape(Bz * num_patch, num_chans, num_full_groups, group_size, patch_size)
+
+		group_mean = torch.mean(complete_x, dim=3) 
+
+		if num_leftovers != 0:
+			rem_x = sorted_x[:, :, num_complete:, :]
+			rem_mean = torch.mean(rem_x, dim=2, keepdim=True)
+			flat = torch.cat([group_mean, rem_mean], dim=2)
+		else:
+			flat = group_mean
+			
+		final_flat = self.group_transform(flat)
+
+		final_num_groups = final_flat.shape[2]
+		final_flat = final_flat.reshape(-1, final_num_groups, patch_size)
+		
+		out = self.attn(final_flat, final_flat, final_flat)[0]
+
+		out = out.permute(0, 2, 1).contiguous()
+		out = self.proj(out).squeeze(-1)
+		
+		out = out.reshape(Bz, num_patch, num_chans, patch_size)
+		out = out.permute(0, 2, 1, 3).contiguous()
+		
+		return out	
 
 class TransformerTemporalEncoderLayer(nn.Module):
 	def __init__(self, sorted_map, in_dim=200, out_dim=200, d_model=200, num_heads=8, dropout=0.1, batch_first=True, convolution_set=[(1,), (3,), (5,)], d_ffn=800):
