@@ -1,11 +1,17 @@
 # Functional Connectivity as an Architectural Prior for EEG Decoding Models
 
 What is in this repository?
+
 -> The interface you will interact and train the model with : all_in_one_ftc.py
+
 -> The testing script once you have the weights : test_evaluator.py
+
 -> The actual engine : /model/TmpEncoder___.py
+
 -> The preprocessing scripts : Sourced from CBraMod
+
 -> The dataloading scripts : Sourced from CSBrain
+
 
 There are two types of engines. Continuous and Random/Modulo as described in the paper. The details of the most important, changeable flags used are as follows:
 
